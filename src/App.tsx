@@ -23,14 +23,14 @@ type ScanState = 'idle' | 'scanning' | 'done';
 
 const DETECTION_INTERVAL_MS = 220;
 const BURST_INTERVAL_MS = 300;
-const MIN_CAPTURE_SCORE = 0.6;
-const RECOGNITION_THRESHOLD = 0.5;
+const MIN_CAPTURE_SCORE = 0.45;
+const RECOGNITION_THRESHOLD = 0.48;
 const STABLE_WINDOW = 6;
 const STABLE_MIN = 4;
 const SCAN_MIN_MS = 3000;
 const SCAN_MAX_MS = 5000;
 
-const detectionOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.6 });
+const detectionOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.35 });
 
 const resolveViewFromHash = (): View => {
   if (typeof window === 'undefined') return 'landing';
@@ -550,7 +550,7 @@ function App() {
                 <Webcam
                   ref={webcamRef}
                   audio={false}
-                  className="webcam-video"
+                  className={`webcam-video ${highVisibility ? 'webcam-video--bright' : ''}`}
                   screenshotFormat="image/jpeg"
                   onUserMedia={handleUserMedia}
                   videoConstraints={{
@@ -639,7 +639,7 @@ function App() {
                 <Webcam
                   ref={webcamRef}
                   audio={false}
-                  className="webcam-video"
+                  className={`webcam-video ${highVisibility ? 'webcam-video--bright' : ''}`}
                   screenshotFormat="image/jpeg"
                   onUserMedia={handleUserMedia}
                   videoConstraints={{

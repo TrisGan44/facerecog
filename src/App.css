@@ -775,6 +775,10 @@ body.is-bright-mode {
   transform: scaleX(-1);
 }
 
+.webcam-video--bright {
+  filter: brightness(1.18) contrast(1.06) saturate(1.04);
+}
+
 .overlay-canvas {
   position: absolute;
   inset: 0;
