@@ -24,7 +24,7 @@ type ScanState = 'idle' | 'scanning' | 'done';
 const DETECTION_INTERVAL_MS = 220;
 const BURST_INTERVAL_MS = 300;
 const MIN_CAPTURE_SCORE = 0.45;
-const RECOGNITION_THRESHOLD = 0.48;
+const RECOGNITION_THRESHOLD = 0.6;
 const STABLE_WINDOW = 6;
 const STABLE_MIN = 4;
 const SCAN_MIN_MS = 3000;
@@ -108,6 +108,36 @@ function App() {
   useEffect(() => {
     nameRef.current = nameInput;
   }, [nameInput]);
+
+  // Load people from localStorage on mount
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('faceRecognition_people');
+      if (stored) {
+        const parsed = JSON.parse(stored) as Array<{ name: string; descriptors: number[][] }>;
+        const loaded: PersonData[] = parsed.map((person) => ({
+          name: person.name,
+          descriptors: person.descriptors.map((desc) => new Float32Array(desc)),
+        }));
+        setPeople(loaded);
+      }
+    } catch (error) {
+      console.error('Error loading people from localStorage:', error);
+    }
+  }, []);
+
+  // Save people to localStorage whenever they change
+  useEffect(() => {
+    try {
+      const toStore = people.map((person) => ({
+        name: person.name,
+        descriptors: person.descriptors.map((desc) => Array.from(desc)),
+      }));
+      localStorage.setItem('faceRecognition_people', JSON.stringify(toStore));
+    } catch (error) {
+      console.error('Error saving people to localStorage:', error);
+    }
+  }, [people]);
 
   useEffect(() => {
     const loadModels = async () => {
@@ -271,8 +301,8 @@ function App() {
       let bestLabel = 'unknown';
       let bestDistance = Number.POSITIVE_INFINITY;
 
-      resizedDetections.forEach((detection, index) => {
-        const match = matcher.findBestMatch(detections[index].descriptor);
+      resizedDetections.forEach((detection) => {
+        const match = matcher.findBestMatch(detection.descriptor);
         const isKnown = match.label !== 'unknown';
         const boxColor = isKnown ? '#2bd4c6' : '#f3b45f';
         const label = isKnown ? match.label : 'Unknown';
