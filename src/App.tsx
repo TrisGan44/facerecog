@@ -42,6 +42,7 @@ const resolveViewFromHash = (): View => {
 
 function App() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [highVisibility, setHighVisibility] = useState(false);
   const [view, setView] = useState<View>(() => resolveViewFromHash());
   const [people, setPeople] = useState<PersonData[]>([]);
   const [nameInput, setNameInput] = useState('');
@@ -74,6 +75,10 @@ function App() {
     label: 'Unverified',
     distance: null,
   });
+
+  useEffect(() => {
+    document.body.classList.toggle('is-bright-mode', highVisibility);
+  }, [highVisibility]);
 
   useEffect(() => {
     stableMatchRef.current = stableMatch;
@@ -158,6 +163,10 @@ function App() {
     } else {
       setView(target);
     }
+  };
+
+  const toggleVisibilityMode = () => {
+    setHighVisibility((prev) => !prev);
   };
 
   const startDetectionLoop = () => {
@@ -407,8 +416,18 @@ function App() {
   const scanActionLabel =
     scanState === 'scanning' ? 'Scanning...' : scanState === 'done' ? 'Scan again' : 'Start scan';
 
+  const visibilityToggle = (
+    <button
+      type="button"
+      className={`btn btn-ghost visibility-toggle ${highVisibility ? 'is-active' : ''}`}
+      onClick={toggleVisibilityMode}
+    >
+      {highVisibility ? 'Mode terang aktif' : 'Mode terang'}
+    </button>
+  );
+
   return (
-    <div className={`app page-${view}`}>
+    <div className={`app page-${view} ${highVisibility ? 'is-bright' : ''}`}>
       {!modelsLoaded && (
         <div className="loading">
           <div className="spinner" />
@@ -417,89 +436,33 @@ function App() {
       )}
 
       {view === 'landing' && (
-        <>
-          <header className="landing-nav">
-            <div className="landing-brand">
-              <div className="landing-mark">VI</div>
-              <div>
-                <div className="landing-title">VisageID</div>
-                <div className="landing-subtitle">Face Access Platform</div>
-              </div>
-            </div>
-            <div className="landing-actions">
-              <button className="btn btn-ghost" onClick={() => navigate('login')}>
-                Login
-              </button>
-              <button className="btn btn-primary" onClick={() => navigate('register')}>
-                Daftar
-              </button>
-            </div>
-          </header>
+        <main className="landing-simple">
+          <div className="landing-simple__badge">VisageID</div>
+          <h1 className="landing-simple__title">Pilih tindakan dengan cepat.</h1>
+          <p className="landing-simple__subtitle">
+            Cukup dua tombol besar untuk bergerak: daftar wajah baru atau langsung login. Aktifkan
+            mode terang jika tampilan terlalu gelap.
+          </p>
 
-          <main className="landing-hero">
-            <div className="landing-copy">
-              <span className="landing-kicker">Biometric security</span>
-              <h1>Welcome to frictionless face access.</h1>
-              <p>
-                Build a reliable face profile in minutes, then unlock access with a smooth 3-5
-                second scan. No passwords, no friction.
-              </p>
-              <div className="landing-cta">
-                <button className="btn btn-primary" onClick={() => navigate('register')}>
-                  Daftar wajah
-                </button>
-                <button className="btn btn-secondary" onClick={() => navigate('login')}>
-                  Login
-                </button>
-              </div>
-            </div>
-            <div className="landing-showcase">
-              <div className="showcase-card">
-                <div className="showcase-title">System snapshot</div>
-                <div className="showcase-grid">
-                  <div className="showcase-row">
-                    <span className="showcase-label">Profiles</span>
-                    <span className="showcase-value">{people.length}</span>
-                  </div>
-                  <div className="showcase-row">
-                    <span className="showcase-label">Samples</span>
-                    <span className="showcase-value">{totalSamples}</span>
-                  </div>
-                  <div className="showcase-row">
-                    <span className="showcase-label">Models</span>
-                    <span className="showcase-value">{modelsLoaded ? 'Online' : 'Loading'}</span>
-                  </div>
-                </div>
-                <div className="showcase-foot">
-                  Status updated in real time while the camera is active.
-                </div>
-              </div>
-              <div className="showcase-card showcase-card--accent">
-                <div className="showcase-title">Access readiness</div>
-                <p>
-                  Capture with confidence. The scanner verifies identity in a controlled 3-5 second
-                  window before granting access.
-                </p>
-                <div className="showcase-badge">Secure by default</div>
-              </div>
-            </div>
-          </main>
+          <div className="landing-simple__actions">
+            <button className="btn btn-cta" onClick={() => navigate('register')}>
+              Daftar wajah
+              <span className="btn-cta__hint">Bangun profil biometrik kamu</span>
+            </button>
+            <button className="btn btn-cta btn-cta--ghost" onClick={() => navigate('login')}>
+              Login
+              <span className="btn-cta__hint">Masuk dengan pemindaian cepat</span>
+            </button>
+          </div>
 
-          <section className="landing-grid">
-            <div className="panel landing-feature">
-              <h3>Fast enrollment</h3>
-              <p>High-speed burst capture collects multiple angles quickly.</p>
+          <div className="landing-simple__assist">
+            <div>
+              <div className="assist-title">Sulit melihat tombol?</div>
+              <p className="assist-copy">Nyalakan mode terang agar area aksi lebih mudah dikenali.</p>
             </div>
-            <div className="panel landing-feature">
-              <h3>Live verification</h3>
-              <p>Real-time detection keeps operators informed during scans.</p>
-            </div>
-            <div className="panel landing-feature">
-              <h3>Clear results</h3>
-              <p>Professional allowed or not allowed feedback with a polished modal.</p>
-            </div>
-          </section>
-        </>
+            {visibilityToggle}
+          </div>
+        </main>
       )}
 
       {view === 'register' && (
@@ -519,6 +482,7 @@ function App() {
               <button className="btn btn-secondary" onClick={() => navigate('login')}>
                 Login
               </button>
+              {visibilityToggle}
             </div>
           </header>
 
@@ -650,6 +614,7 @@ function App() {
               <button className="btn btn-secondary" onClick={() => navigate('register')}>
                 Daftar
               </button>
+              {visibilityToggle}
             </div>
           </header>
 
