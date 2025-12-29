@@ -178,7 +178,10 @@ function App() {
       if (resizedDetections.length === 0) {
         setLiveMatch('No face');
         setConfidence(null);
-        matchHistoryRef.current = [];
+        // Only reset history when NOT scanning (fix: don't break scan progress)
+        if (!scanningRef.current) {
+          matchHistoryRef.current = [];
+        }
         return;
       }
 
@@ -190,7 +193,13 @@ function App() {
         return;
       }
 
-      resizedDetections.forEach((detection) => {
+      // Security: Only process first face during login scan to prevent multi-face attacks
+      // During register, show all faces for user awareness
+      const detectionsToProcess = scanningRef.current
+        ? [resizedDetections[0]]
+        : resizedDetections;
+
+      detectionsToProcess.forEach((detection) => {
         const match = matcher.findBestMatch(detection.descriptor);
         const isKnown = match.label !== 'unknown';
         const boxColor = isKnown ? '#00ff88' : '#ff4757';
@@ -266,6 +275,7 @@ function App() {
     setScanning(true);
     scanningRef.current = true;
     setLoginResult(null);
+    setLoggedInUser(null); // Clear previous login state
     setScanProgress(0);
     matchHistoryRef.current = [];
 
@@ -293,6 +303,7 @@ function App() {
         setLoggedInUser(name);
         setLoginResult({ status: 'allowed', name });
       } else {
+        setLoggedInUser(null); // Clear stale login state on denial
         setLoginResult({ status: 'denied' });
       }
 
@@ -411,7 +422,7 @@ function App() {
       {/* Register Screen */}
       {screen === 'register' && (
         <div className="screen">
-          <button className="back-btn" onClick={goBack}>
+          <button className="back-btn" onClick={goBack} aria-label="Go back to home screen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
@@ -442,6 +453,7 @@ function App() {
                 value={nameInput}
                 onChange={(e) => setNameInput(e.target.value)}
                 className="text-input"
+                aria-label="Name for face registration"
               />
               {currentPersonSamples > 0 && (
                 <span className="input-badge">{currentPersonSamples} captured</span>
@@ -500,7 +512,11 @@ function App() {
                         <small>{person.descriptors.length} samples</small>
                       </div>
                     </div>
-                    <button className="delete-btn" onClick={() => deletePerson(person.name)}>
+                    <button
+                      className="delete-btn"
+                      onClick={() => deletePerson(person.name)}
+                      aria-label={`Delete ${person.name}`}
+                    >
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
                       </svg>
@@ -516,7 +532,7 @@ function App() {
       {/* Login Screen */}
       {screen === 'login' && (
         <div className="screen">
-          <button className="back-btn" onClick={goBack}>
+          <button className="back-btn" onClick={goBack} aria-label="Go back to home screen">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>

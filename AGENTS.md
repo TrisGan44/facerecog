@@ -67,3 +67,23 @@ This is a browser-based face recognition application built with React + TypeScri
 ### 3. Login Failing Despite Face Recognition
 **Bug**: Face showed as recognized (e.g., "aang 91%") but login still denied. React closure issue - `scanning` state was captured at old value inside `detectFrame` async callback.
 **Fix**: Use `scanningRef.current` (ref) instead of `scanning` (state) inside detection loop. Refs don't have closure issues since they're mutable objects.
+
+### 4. Scan History Reset on No-Face Frame (Critical)
+**Bug**: During 4-second login scan, if ANY frame detected no face (brief look away, blink, low light), `matchHistoryRef.current` was reset to `[]`, losing all scan progress. Made scans extremely brittle and unreliable.
+**Fix**: Only reset `matchHistoryRef.current` when NOT scanning (`!scanningRef.current`). During active scan, preserve history through temporary no-face frames. [src/App.tsx:178-185]
+
+### 5. Multi-Face Security Vulnerability
+**Bug**: During login scan, if multiple faces were detected in a frame, ALL faces were processed and added to match history. An attacker could stand behind legitimate user and influence login result.
+**Fix**: During login scan (`scanningRef.current === true`), only process first detected face. During registration, continue showing all faces for user awareness. [src/App.tsx:196-200]
+
+### 6. Stale Logged-In Badge After Denied Scan
+**Bug**: If a previous login scan succeeded, `loggedInUser` state remained set. After a later denied scan, closing the modal would show "Logged in as <old user>" despite the failed attempt.
+**Fix**: Clear `loggedInUser` at start of `startLoginScan()` and when scan is denied. [src/App.tsx:278, 306]
+
+### 7. Font Loading Conflict
+**Bug**: `index.css` loaded Google Fonts (Space Grotesk, DM Sans) but `App.css` overrode with system fonts. Wasted bandwidth loading unused fonts.
+**Fix**: Removed Google Fonts import from `index.css`. App now uses system font stack for faster load times and consistent typography. [src/index.css:1-2]
+
+### 8. Accessibility Improvements
+**Issue**: Icon-only buttons (back, delete) lacked aria-labels. Name input relied solely on placeholder text.
+**Fix**: Added descriptive `aria-label` attributes to back buttons, delete buttons, and name input for screen reader support. [src/App.tsx:425, 456, 518, 535]
