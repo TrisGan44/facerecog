@@ -5,11 +5,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-npm run dev      # Start development server with HMR
 npm run build    # TypeScript compile + Vite production build
 npm run lint     # Run ESLint
 npm run preview  # Preview production build locally
 ```
+
+Note: User runs dev server manually.
 
 ## Architecture Overview
 
@@ -22,9 +23,10 @@ This is a browser-based face recognition application built with React + TypeScri
 
 ### Application Flow
 
-**Single-Page Architecture** (`src/App.tsx`):
-- One persistent webcam instance that never unmounts (avoids detection issues when switching modes)
-- Tab-based mode switching between "Daftar" (register) and "Login"
+**Screen-Based Navigation** (`src/App.tsx`):
+- Three screens: `home`, `register`, `login` (controlled by `screen` state)
+- Webcam mounts fresh on each screen - detection loop starts via `onUserMedia` callback
+- Navigation via `goBack()` which properly cleans up detection loop before switching
 - Continuous face detection loop runs at ~200ms intervals
 
 **Face Registration**:
@@ -48,4 +50,20 @@ This is a browser-based face recognition application built with React + TypeScri
 
 **Recognition Threshold**: Set to 0.55 (lower = stricter matching). FaceMatcher returns "unknown" if best match distance exceeds threshold.
 
-**localStorage Race Condition Fix**: Uses `isFirstSaveRender` ref to skip saving on initial mount, preventing empty array from overwriting stored face data on page load.
+## Bug Fixes & Lessons Learned
+
+### 1. localStorage Race Condition
+**Bug**: On page load, the save effect ran with empty `people=[]` before localStorage was loaded, overwriting stored face data.
+**Fix**: `isFirstSaveRender` ref skips the first render's save operation.
+
+### 2. Detection Loop Not Restarting After Navigation
+**Bug**: When navigating home→register→home→login, detection loop kept running with stale `videoRef` from the first screen. The `startDetectionLoop()` guard `if (detectionIntervalRef.current) return` prevented new loop from starting.
+**Fix**:
+- `stopDetectionLoop()` clears interval, resets `videoRef` to null, clears canvas
+- `goBack()` calls `stopDetectionLoop()` before changing screen
+- `startDetectionLoop()` now always clears existing interval before starting fresh
+- When new screen mounts, `onUserMedia` callback sets fresh `videoRef` and starts new loop
+
+### 3. Login Failing Despite Face Recognition
+**Bug**: Face showed as recognized (e.g., "aang 91%") but login still denied. React closure issue - `scanning` state was captured at old value inside `detectFrame` async callback.
+**Fix**: Use `scanningRef.current` (ref) instead of `scanning` (state) inside detection loop. Refs don't have closure issues since they're mutable objects.

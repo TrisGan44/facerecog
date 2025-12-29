@@ -122,6 +122,22 @@ function App() {
     };
   }, []);
 
+  const stopDetectionLoop = () => {
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
+    }
+    // Clear canvas and reset state
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx?.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    videoRef.current = null;
+    setLiveMatch('No face');
+    setConfidence(null);
+  };
+
   const handleUserMedia = () => {
     if (!webcamRef.current?.video) return;
     videoRef.current = webcamRef.current.video;
@@ -129,7 +145,11 @@ function App() {
   };
 
   const startDetectionLoop = () => {
-    if (detectionIntervalRef.current) return;
+    // Stop existing loop first to ensure fresh start
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
+    }
     detectionIntervalRef.current = setInterval(() => {
       void detectFrame();
     }, DETECTION_INTERVAL_MS);
@@ -286,6 +306,7 @@ function App() {
   };
 
   const goBack = () => {
+    // Stop burst capture if active
     if (burstActive) {
       if (burstIntervalRef.current) {
         clearInterval(burstIntervalRef.current);
@@ -293,6 +314,20 @@ function App() {
       }
       setBurstActive(false);
     }
+    // Stop scan if in progress
+    if (scanTimeoutRef.current) {
+      clearTimeout(scanTimeoutRef.current);
+      scanTimeoutRef.current = null;
+    }
+    if (scanProgressRef.current) {
+      clearInterval(scanProgressRef.current);
+      scanProgressRef.current = null;
+    }
+    setScanning(false);
+    scanningRef.current = false;
+    // Stop detection loop - this clears videoRef and resets state
+    // Next screen will get fresh detection loop when webcam mounts
+    stopDetectionLoop();
     setScreen('home');
     setLoginResult(null);
   };
