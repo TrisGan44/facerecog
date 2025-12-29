@@ -270,10 +270,10 @@ function App() {
   };
 
   const startLoginScan = () => {
-    if (!modelsLoaded || scanning || people.length === 0) return;
+    if (!modelsLoaded || scanningRef.current || people.length === 0) return;
 
-    setScanning(true);
     scanningRef.current = true;
+    setScanning(true);
     setLoginResult(null);
     setLoggedInUser(null); // Clear previous login state
     setScanProgress(0);
@@ -314,6 +314,16 @@ function App() {
 
   const deletePerson = (name: string) => {
     setPeople((prev) => prev.filter((p) => p.name !== name));
+  };
+
+  const clearStoredData = () => {
+    setPeople([]);
+    localStorage.removeItem('faceRecognition_people');
+    matchHistoryRef.current = [];
+    setLoggedInUser(null);
+    setLoginResult(null);
+    setLiveMatch('No face');
+    setConfidence(null);
   };
 
   const goBack = () => {
@@ -446,6 +456,9 @@ function App() {
           </div>
 
           <div className="form-section">
+            <label className="text-label" htmlFor="nameInput">
+              Name
+            </label>
             <div className="input-wrapper">
               <input
                 type="text"
@@ -454,6 +467,7 @@ function App() {
                 onChange={(e) => setNameInput(e.target.value)}
                 className="text-input"
                 aria-label="Name for face registration"
+                id="nameInput"
               />
               {currentPersonSamples > 0 && (
                 <span className="input-badge">{currentPersonSamples} captured</span>
@@ -495,6 +509,16 @@ function App() {
                     Burst
                   </>
                 )}
+              </button>
+            </div>
+
+            <div className="storage-notice">
+              <div>
+                <strong>Where is my data?</strong>
+                <p>Face data stays on this browser using local storage.</p>
+              </div>
+              <button className="link-btn" type="button" onClick={clearStoredData}>
+                Clear stored faces
               </button>
             </div>
           </div>
