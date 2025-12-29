@@ -305,6 +305,11 @@ body {
   gap: 16px;
 }
 
+.text-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
 .input-wrapper {
   position: relative;
 }
@@ -347,6 +352,36 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.storage-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 12px;
+}
+
+.storage-notice p {
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-size: 0.95rem;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--secondary);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 8px 0;
+}
+
+.link-btn:hover {
+  color: var(--secondary-hover);
 }
 
 .action-btn {
