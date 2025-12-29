@@ -8,58 +8,33 @@ interface PersonData {
   descriptors: Float32Array[];
 }
 
-interface MatchState {
-  label: string;
-  distance: number | null;
-}
-
 interface LoginResult {
   status: 'allowed' | 'denied';
   name?: string;
 }
 
-type View = 'landing' | 'register' | 'login';
-type ScanState = 'idle' | 'scanning' | 'done';
+type Mode = 'register' | 'login';
 
-const DETECTION_INTERVAL_MS = 220;
-const BURST_INTERVAL_MS = 300;
-const MIN_CAPTURE_SCORE = 0.45;
-const RECOGNITION_THRESHOLD = 0.6;
-const STABLE_WINDOW = 6;
-const STABLE_MIN = 4;
-const SCAN_MIN_MS = 3000;
-const SCAN_MAX_MS = 5000;
+const DETECTION_INTERVAL_MS = 200;
+const BURST_INTERVAL_MS = 250;
+const MIN_CAPTURE_SCORE = 0.4;
+const RECOGNITION_THRESHOLD = 0.55;
+const SCAN_DURATION_MS = 4000;
 
-const detectionOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.35 });
-
-const resolveViewFromHash = (): View => {
-  if (typeof window === 'undefined') return 'landing';
-  const hash = window.location.hash.replace('#', '');
-  if (hash.startsWith('/register')) return 'register';
-  if (hash.startsWith('/login')) return 'login';
-  return 'landing';
-};
+const detectionOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 });
 
 function App() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
-  const [highVisibility, setHighVisibility] = useState(false);
-  const [view, setView] = useState<View>(() => resolveViewFromHash());
+  const [mode, setMode] = useState<Mode>('register');
   const [people, setPeople] = useState<PersonData[]>([]);
   const [nameInput, setNameInput] = useState('');
   const [burstActive, setBurstActive] = useState(false);
-  const [liveMatch, setLiveMatch] = useState<MatchState>({
-    label: 'No face',
-    distance: null,
-  });
-  const [stableMatch, setStableMatch] = useState<MatchState>({
-    label: 'Unverified',
-    distance: null,
-  });
+  const [liveMatch, setLiveMatch] = useState<string>('No face');
+  const [confidence, setConfidence] = useState<number | null>(null);
   const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
-  const [scanState, setScanState] = useState<ScanState>('idle');
-  const [scanDuration, setScanDuration] = useState(3800);
-  const [scanSequence, setScanSequence] = useState(0);
+  const [scanning, setScanning] = useState(false);
   const [loginResult, setLoginResult] = useState<LoginResult | null>(null);
+  const [scanProgress, setScanProgress] = useState(0);
 
   const webcamRef = useRef<Webcam>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -68,32 +43,14 @@ function App() {
   const detectionIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const burstIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const scanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanProgressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const detectingRef = useRef(false);
-  const matchHistoryRef = useRef<string[]>([]);
   const nameRef = useRef('');
-  const stableMatchRef = useRef<MatchState>({
-    label: 'Unverified',
-    distance: null,
-  });
+  const matchHistoryRef = useRef<string[]>([]);
+  const isFirstSaveRender = useRef(true);
+  const scanningRef = useRef(false);
 
-  useEffect(() => {
-    document.body.classList.toggle('is-bright-mode', highVisibility);
-  }, [highVisibility]);
-
-  useEffect(() => {
-    stableMatchRef.current = stableMatch;
-  }, [stableMatch]);
-
-  useEffect(() => {
-    const handleHashChange = () => {
-      setView(resolveViewFromHash());
-    };
-    window.addEventListener('hashchange', handleHashChange);
-    return () => {
-      window.removeEventListener('hashchange', handleHashChange);
-    };
-  }, []);
-
+  // Update matcher when people changes
   useEffect(() => {
     if (people.length === 0) {
       matcherRef.current = null;
@@ -109,7 +66,7 @@ function App() {
     nameRef.current = nameInput;
   }, [nameInput]);
 
-  // Load people from localStorage on mount
+  // Load people from localStorage
   useEffect(() => {
     try {
       const stored = localStorage.getItem('faceRecognition_people');
@@ -122,12 +79,16 @@ function App() {
         setPeople(loaded);
       }
     } catch (error) {
-      console.error('Error loading people from localStorage:', error);
+      console.error('Error loading from localStorage:', error);
     }
   }, []);
 
-  // Save people to localStorage whenever they change
+  // Save people to localStorage
   useEffect(() => {
+    if (isFirstSaveRender.current) {
+      isFirstSaveRender.current = false;
+      return;
+    }
     try {
       const toStore = people.map((person) => ({
         name: person.name,
@@ -135,10 +96,11 @@ function App() {
       }));
       localStorage.setItem('faceRecognition_people', JSON.stringify(toStore));
     } catch (error) {
-      console.error('Error saving people to localStorage:', error);
+      console.error('Error saving to localStorage:', error);
     }
   }, [people]);
 
+  // Load models
   useEffect(() => {
     const loadModels = async () => {
       const MODEL_URL = '/models';
@@ -153,50 +115,20 @@ function App() {
         console.error('Error loading models:', error);
       }
     };
-
     loadModels();
 
     return () => {
-      stopDetectionLoop();
-      stopBurstCapture(false);
-      clearScanTimer();
+      if (detectionIntervalRef.current) clearInterval(detectionIntervalRef.current);
+      if (burstIntervalRef.current) clearInterval(burstIntervalRef.current);
+      if (scanTimeoutRef.current) clearTimeout(scanTimeoutRef.current);
+      if (scanProgressRef.current) clearInterval(scanProgressRef.current);
     };
   }, []);
 
-  useEffect(() => {
-    if (view === 'landing') {
-      stopDetectionLoop();
-      stopBurstCapture();
-      setLoggedInUser(null);
-    }
-
-    if (view !== 'login') {
-      resetScanState();
-      setLoginResult(null);
-    }
-
-    if (view !== 'register') {
-      stopBurstCapture();
-    }
-
-    if (view === 'login') {
-      matchHistoryRef.current = [];
-      setStableMatch({ label: 'Unverified', distance: null });
-      setLiveMatch({ label: 'No face', distance: null });
-    }
-  }, [view]);
-
-  const navigate = (target: View) => {
-    const hash = target === 'landing' ? '#/' : `#/${target}`;
-    if (window.location.hash !== hash) {
-      window.location.hash = hash;
-    } else {
-      setView(target);
-    }
-  };
-
-  const toggleVisibilityMode = () => {
-    setHighVisibility((prev) => !prev);
+  const handleUserMedia = () => {
+    if (!webcamRef.current?.video) return;
+    videoRef.current = webcamRef.current.video;
+    startDetectionLoop();
   };
 
   const startDetectionLoop = () => {
@@ -204,64 +136,6 @@ function App() {
     detectionIntervalRef.current = setInterval(() => {
       void detectFrame();
     }, DETECTION_INTERVAL_MS);
-  };
-
-  const stopDetectionLoop = () => {
-    if (detectionIntervalRef.current) {
-      clearInterval(detectionIntervalRef.current);
-      detectionIntervalRef.current = null;
-    }
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const ctx = canvas.getContext('2d');
-      ctx?.clearRect(0, 0, canvas.width, canvas.height);
-    }
-  };
-
-  const clearScanTimer = () => {
-    if (scanTimeoutRef.current) {
-      clearTimeout(scanTimeoutRef.current);
-      scanTimeoutRef.current = null;
-    }
-  };
-
-  const resetScanState = () => {
-    clearScanTimer();
-    setScanState('idle');
-  };
-
-  const handleUserMedia = () => {
-    if (!webcamRef.current?.video) return;
-    videoRef.current = webcamRef.current.video;
-    startDetectionLoop();
-    if (view === 'login' && scanState === 'idle') {
-      startLoginScan();
-    }
-  };
-
-  const updateStableMatch = (label: string, distance: number | null) => {
-    const history = matchHistoryRef.current;
-    history.push(label);
-    if (history.length > STABLE_WINDOW) history.shift();
-
-    const counts: Record<string, number> = {};
-    for (const entry of history) {
-      counts[entry] = (counts[entry] ?? 0) + 1;
-    }
-
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    if (sorted.length === 0) return;
-
-    const [topLabel, topCount] = sorted[0];
-    if (topLabel === 'unknown' || topLabel === 'No face' || topLabel === 'No references') {
-      setStableMatch({ label: 'Unverified', distance: null });
-      return;
-    }
-
-    if (topCount >= STABLE_MIN) {
-      const stableDistance = topLabel === label ? distance : null;
-      setStableMatch({ label: topLabel, distance: stableDistance });
-    }
   };
 
   const detectFrame = async () => {
@@ -285,44 +159,41 @@ function App() {
       ctx?.clearRect(0, 0, canvas.width, canvas.height);
 
       if (resizedDetections.length === 0) {
-        setLiveMatch({ label: 'No face', distance: null });
-        updateStableMatch('No face', null);
+        setLiveMatch('No face');
+        setConfidence(null);
+        matchHistoryRef.current = [];
         return;
       }
 
       const matcher = matcherRef.current;
       if (!matcher) {
         faceapi.draw.drawDetections(canvas, resizedDetections);
-        setLiveMatch({ label: 'No references', distance: null });
-        updateStableMatch('No references', null);
+        setLiveMatch('No references');
+        setConfidence(null);
         return;
       }
-
-      let bestLabel = 'unknown';
-      let bestDistance = Number.POSITIVE_INFINITY;
 
       resizedDetections.forEach((detection) => {
         const match = matcher.findBestMatch(detection.descriptor);
         const isKnown = match.label !== 'unknown';
-        const boxColor = isKnown ? '#2bd4c6' : '#f3b45f';
+        const boxColor = isKnown ? '#00ff88' : '#ff6b6b';
         const label = isKnown ? match.label : 'Unknown';
 
         const drawBox = new faceapi.draw.DrawBox(detection.detection.box, {
-          label,
+          label: `${label} ${Math.round((1 - match.distance) * 100)}%`,
           boxColor,
-          lineWidth: 2,
+          lineWidth: 3,
         });
         drawBox.draw(canvas);
 
-        if (match.distance < bestDistance) {
-          bestDistance = match.distance;
-          bestLabel = match.label;
+        setLiveMatch(label);
+        setConfidence(Math.round((1 - match.distance) * 100));
+
+        // Track match history for login
+        if (scanningRef.current) {
+          matchHistoryRef.current.push(match.label);
         }
       });
-
-      const liveDistance = Number.isFinite(bestDistance) ? bestDistance : null;
-      setLiveMatch({ label: bestLabel, distance: liveDistance });
-      updateStableMatch(bestLabel, liveDistance);
     } catch (error) {
       console.error('Detection error:', error);
     } finally {
@@ -355,61 +226,67 @@ function App() {
     });
   };
 
-  const startBurstCapture = () => {
-    if (burstIntervalRef.current) return;
-    setBurstActive(true);
-    void captureFace();
-    burstIntervalRef.current = setInterval(() => {
-      void captureFace();
-    }, BURST_INTERVAL_MS);
-  };
-
-  const stopBurstCapture = (updateState = true) => {
-    if (burstIntervalRef.current) {
-      clearInterval(burstIntervalRef.current);
-      burstIntervalRef.current = null;
-    }
-    if (updateState) {
-      setBurstActive(false);
-    }
-  };
-
   const toggleBurst = () => {
     if (burstActive) {
-      stopBurstCapture();
+      if (burstIntervalRef.current) {
+        clearInterval(burstIntervalRef.current);
+        burstIntervalRef.current = null;
+      }
+      setBurstActive(false);
     } else {
-      startBurstCapture();
+      setBurstActive(true);
+      void captureFace();
+      burstIntervalRef.current = setInterval(() => {
+        void captureFace();
+      }, BURST_INTERVAL_MS);
     }
-  };
-
-  const finalizeLoginScan = () => {
-    const label = stableMatchRef.current.label;
-    if (label && label !== 'Unverified') {
-      setLoggedInUser(label);
-      setLoginResult({ status: 'allowed', name: label });
-    } else {
-      setLoginResult({ status: 'denied' });
-    }
-    setScanState('done');
   };
 
   const startLoginScan = () => {
-    if (!modelsLoaded || scanState === 'scanning') return;
-    clearScanTimer();
-    const duration = Math.floor(SCAN_MIN_MS + Math.random() * (SCAN_MAX_MS - SCAN_MIN_MS));
-    setScanDuration(duration);
-    setScanSequence((prev) => prev + 1);
-    setScanState('scanning');
+    if (!modelsLoaded || scanning || people.length === 0) return;
+
+    setScanning(true);
+    scanningRef.current = true;
     setLoginResult(null);
+    setScanProgress(0);
     matchHistoryRef.current = [];
-    setStableMatch({ label: 'Unverified', distance: null });
+
+    // Progress animation
+    const startTime = Date.now();
+    scanProgressRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      setScanProgress(Math.min((elapsed / SCAN_DURATION_MS) * 100, 100));
+    }, 50);
+
     scanTimeoutRef.current = setTimeout(() => {
-      finalizeLoginScan();
-    }, duration);
+      if (scanProgressRef.current) clearInterval(scanProgressRef.current);
+      setScanProgress(100);
+
+      // Analyze match history
+      const history = matchHistoryRef.current;
+      const counts: Record<string, number> = {};
+      for (const label of history) {
+        if (label !== 'unknown') {
+          counts[label] = (counts[label] ?? 0) + 1;
+        }
+      }
+
+      const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      if (sorted.length > 0 && sorted[0][1] >= 3) {
+        const name = sorted[0][0];
+        setLoggedInUser(name);
+        setLoginResult({ status: 'allowed', name });
+      } else {
+        setLoginResult({ status: 'denied' });
+      }
+
+      setScanning(false);
+      scanningRef.current = false;
+    }, SCAN_DURATION_MS);
   };
 
-  const dismissLoginResult = () => {
-    setLoginResult(null);
+  const deletePerson = (name: string) => {
+    setPeople((prev) => prev.filter((p) => p.name !== name));
   };
 
   const totalSamples = useMemo(
@@ -425,373 +302,193 @@ function App() {
 
   const hasName = nameInput.trim().length > 0;
 
-  const canLogin = stableMatch.label !== 'Unverified';
-
-  const formatLabel = (label: string) => {
-    if (label === 'unknown') return 'Unknown';
-    if (label === 'No face') return 'No face';
-    if (label === 'No references') return 'No references';
-    if (label === 'Unverified') return 'Unverified';
-    return label;
-  };
-
-  const confidence =
-    liveMatch.distance !== null
-      ? Math.max(0, Math.round((1 - liveMatch.distance) * 100))
-      : null;
-
-  const scanStatus =
-    scanState === 'scanning' ? 'Scanning' : scanState === 'done' ? 'Complete' : 'Ready';
-
-  const scanActionLabel =
-    scanState === 'scanning' ? 'Scanning...' : scanState === 'done' ? 'Scan again' : 'Start scan';
-
-  const visibilityToggle = (
-    <button
-      type="button"
-      className={`btn btn-ghost visibility-toggle ${highVisibility ? 'is-active' : ''}`}
-      onClick={toggleVisibilityMode}
-    >
-      {highVisibility ? 'Mode terang aktif' : 'Mode terang'}
-    </button>
-  );
-
   return (
-    <div className={`app page-${view} ${highVisibility ? 'is-bright' : ''}`}>
+    <div className="app-single">
+      {/* Loading Modal */}
       {!modelsLoaded && (
-        <div className="loading">
-          <div className="spinner" />
-          <p>Loading recognition models...</p>
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <div className="spinner" />
+            <h3>Loading Models...</h3>
+          </div>
         </div>
       )}
 
-      {view === 'landing' && (
-        <main className="landing-simple">
-          <div className="landing-simple__badge">VisageID</div>
-          <h1 className="landing-simple__title">Pilih tindakan dengan cepat.</h1>
-          <p className="landing-simple__subtitle">
-            Cukup dua tombol besar untuk bergerak: daftar wajah baru atau langsung login. Aktifkan
-            mode terang jika tampilan terlalu gelap.
-          </p>
+      {/* Header */}
+      <header className="header">
+        <h1 className="logo">FaceID</h1>
+        <div className="mode-tabs">
+          <button
+            className={`tab ${mode === 'register' ? 'tab--active' : ''}`}
+            onClick={() => setMode('register')}
+          >
+            Daftar
+          </button>
+          <button
+            className={`tab ${mode === 'login' ? 'tab--active' : ''}`}
+            onClick={() => setMode('login')}
+          >
+            Login
+          </button>
+        </div>
+      </header>
 
-          <div className="landing-simple__actions">
-            <button className="btn btn-cta" onClick={() => navigate('register')}>
-              Daftar wajah
-              <span className="btn-cta__hint">Bangun profil biometrik kamu</span>
-            </button>
-            <button className="btn btn-cta btn-cta--ghost" onClick={() => navigate('login')}>
-              Login
-              <span className="btn-cta__hint">Masuk dengan pemindaian cepat</span>
-            </button>
+      {/* Main Content */}
+      <main className="main-content">
+        {/* Camera - Always visible */}
+        <section className="camera-section">
+          <div className="camera-container">
+            <Webcam
+              ref={webcamRef}
+              audio={false}
+              className="webcam"
+              onUserMedia={handleUserMedia}
+              videoConstraints={{
+                width: 640,
+                height: 480,
+                facingMode: 'user',
+              }}
+            />
+            <canvas ref={canvasRef} className="canvas-overlay" />
+
+            {/* Scan Progress Overlay */}
+            {scanning && (
+              <div className="scan-overlay">
+                <div className="scan-line" style={{ '--progress': `${scanProgress}%` } as CSSProperties} />
+                <div className="scan-text">Scanning... {Math.round(scanProgress)}%</div>
+              </div>
+            )}
           </div>
 
-          <div className="landing-simple__assist">
-            <div>
-              <div className="assist-title">Sulit melihat tombol?</div>
-              <p className="assist-copy">Nyalakan mode terang agar area aksi lebih mudah dikenali.</p>
-            </div>
-            {visibilityToggle}
+          {/* Live Status */}
+          <div className="live-status">
+            <span className="status-indicator" data-match={liveMatch !== 'No face' && liveMatch !== 'Unknown' && liveMatch !== 'No references'} />
+            <span>{liveMatch}</span>
+            {confidence !== null && <span className="confidence">{confidence}%</span>}
           </div>
-        </main>
-      )}
+        </section>
 
-      {view === 'register' && (
-        <>
-          <header className="register-nav">
-            <div className="register-brand">
-              <div className="register-mark">RG</div>
-              <div>
-                <div className="register-title">Registration Studio</div>
-                <div className="register-subtitle">Capture & enrollment</div>
-              </div>
-            </div>
-            <div className="register-actions">
-              <button className="btn btn-ghost" onClick={() => navigate('landing')}>
-                Beranda
-              </button>
-              <button className="btn btn-secondary" onClick={() => navigate('login')}>
-                Login
-              </button>
-              {visibilityToggle}
-            </div>
-          </header>
+        {/* Controls Panel */}
+        <section className="controls-section">
+          {/* Register Mode */}
+          {mode === 'register' && (
+            <div className="register-controls">
+              <h2>Daftar Wajah Baru</h2>
 
-          <main className="register-layout">
-            <section className="panel register-panel">
-              <span className="register-tag">Registration</span>
-              <h1>Daftarkan wajah untuk akses cepat.</h1>
-              <p>
-                Capture beberapa sudut wajah agar akurasi login makin tinggi. Burst capture kini
-                lebih cepat untuk memperbanyak sample.
-              </p>
-
-              <div className="register-form">
-                <label className="field">
-                  <span>Reference name</span>
-                  <input
-                    type="text"
-                    placeholder="Type once, keep it"
-                    value={nameInput}
-                    onChange={(event) => setNameInput(event.target.value)}
-                  />
-                  <span className="field-hint">Samples saved: {currentPersonSamples}</span>
-                </label>
+              <div className="input-group">
+                <input
+                  type="text"
+                  placeholder="Masukkan nama..."
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  className="name-input"
+                />
+                {currentPersonSamples > 0 && (
+                  <span className="sample-count">{currentPersonSamples} samples</span>
+                )}
               </div>
 
-              <div className="register-action-row">
+              <div className="button-group">
                 <button
                   className="btn btn-primary"
                   onClick={captureFace}
                   disabled={!modelsLoaded || !hasName}
                 >
-                  Add reference frame
+                  Capture
                 </button>
                 <button
-                  className={`btn btn-secondary ${burstActive ? 'btn-secondary--active' : ''}`}
+                  className={`btn ${burstActive ? 'btn-danger' : 'btn-secondary'}`}
                   onClick={toggleBurst}
                   disabled={!modelsLoaded || !hasName}
                 >
-                  {burstActive ? 'Stop burst capture' : 'Start burst capture'}
+                  {burstActive ? 'Stop' : 'Burst'}
                 </button>
               </div>
 
-              <div className="register-metrics">
-                <div className="metric-chip">Profiles {people.length}</div>
-                <div className="metric-chip">Samples {totalSamples}</div>
-                <div className={`metric-chip ${modelsLoaded ? 'metric-chip--on' : ''}`}>
-                  Models {modelsLoaded ? 'online' : 'loading'}
-                </div>
-                <div className={`metric-chip ${burstActive ? 'metric-chip--on' : ''}`}>
-                  Burst {burstActive ? 'on' : 'off'}
-                </div>
+              <div className="stats">
+                <span>{people.length} orang</span>
+                <span>{totalSamples} samples</span>
               </div>
-            </section>
-
-            <section className="panel register-capture">
-              <div className="register-capture-header">
-                <div>
-                  <h2>Capture Stage</h2>
-                  <p>Stay centered and keep lighting consistent.</p>
-                </div>
-                <div className="chip">Interval {BURST_INTERVAL_MS}ms</div>
-              </div>
-
-              <div className="camera-shell camera-shell--register">
-                <Webcam
-                  ref={webcamRef}
-                  audio={false}
-                  className={`webcam-video ${highVisibility ? 'webcam-video--bright' : ''}`}
-                  screenshotFormat="image/jpeg"
-                  onUserMedia={handleUserMedia}
-                  videoConstraints={{
-                    width: 960,
-                    height: 720,
-                    facingMode: 'user',
-                  }}
-                />
-                <canvas ref={canvasRef} className="overlay-canvas" />
-                <div className="frame-guide">
-                  <div className="frame-guide__glow" />
-                </div>
-              </div>
-
-              <div className="register-capture-foot">
-                <span className="status-label">Tip</span>
-                <span className="status-value">Move slowly to capture multiple angles.</span>
-              </div>
-            </section>
-
-            <section className="panel register-vault">
-              <div className="register-vault-header">
-                <div>
-                  <h2>Reference Vault</h2>
-                  <p>Each profile stores multiple descriptors for higher precision.</p>
-                </div>
-                <div className="chip">{totalSamples} total frames</div>
-              </div>
-
-              <div className="vault-list">
-                {people.length === 0 ? (
-                  <div className="empty-state">No references saved yet.</div>
-                ) : (
-                  people.map((person) => (
-                    <div className="vault-item" key={person.name}>
-                      <div>
-                        <div className="vault-name">{person.name}</div>
-                        <div className="vault-meta">{person.descriptors.length} samples</div>
-                      </div>
-                      <div className="vault-pill">Active</div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </main>
-        </>
-      )}
-
-      {view === 'login' && (
-        <>
-          <header className="login-nav">
-            <div className="login-brand">
-              <div className="login-title">Access Terminal</div>
-              <div className="login-subtitle">Face recognition login</div>
             </div>
-            <div className="login-actions">
-              <button className="btn btn-ghost" onClick={() => navigate('landing')}>
-                Beranda
-              </button>
-              <button className="btn btn-secondary" onClick={() => navigate('register')}>
-                Daftar
-              </button>
-              {visibilityToggle}
-            </div>
-          </header>
+          )}
 
-          <main className="login-layout">
-            <section className="panel login-scan">
-              <div className="login-scan-header">
-                <div>
-                  <span className="login-tag">Face Login</span>
-                  <h2>Scan wajah 3-5 detik</h2>
-                  <p>Hold steady while the scanner verifies your identity.</p>
-                </div>
-                <div className={`chip ${scanState === 'scanning' ? 'chip--active' : ''}`}>
-                  {scanStatus}
-                </div>
-              </div>
+          {/* Login Mode */}
+          {mode === 'login' && (
+            <div className="login-controls">
+              <h2>Login dengan Wajah</h2>
 
-              {people.length === 0 && (
-                <div className="notice">No references stored yet. Please register first.</div>
-              )}
-
-              <div className="camera-shell camera-shell--login">
-                <Webcam
-                  ref={webcamRef}
-                  audio={false}
-                  className={`webcam-video ${highVisibility ? 'webcam-video--bright' : ''}`}
-                  screenshotFormat="image/jpeg"
-                  onUserMedia={handleUserMedia}
-                  videoConstraints={{
-                    width: 960,
-                    height: 720,
-                    facingMode: 'user',
-                  }}
-                />
-                <canvas ref={canvasRef} className="overlay-canvas" />
-                <div className="scan-frame" />
-                {scanState === 'scanning' && (
-                  <div
-                    key={scanSequence}
-                    className="scan-overlay"
-                    style={{ '--scan-duration': `${scanDuration}ms` } as CSSProperties}
+              {people.length === 0 ? (
+                <p className="warning">Belum ada wajah terdaftar. Daftar dulu!</p>
+              ) : (
+                <>
+                  <button
+                    className="btn btn-primary btn-large"
+                    onClick={startLoginScan}
+                    disabled={!modelsLoaded || scanning}
                   >
-                    <div className="scan-beam" />
-                    <div className="scan-panel">
-                      <span className="scan-title">Scanning face</span>
-                      <span className="scan-subtitle">Hold steady for verification</span>
-                      <div className="scan-progress" />
+                    {scanning ? 'Scanning...' : 'Mulai Scan'}
+                  </button>
+
+                  {loggedInUser && (
+                    <div className="logged-in">
+                      <span className="check-icon">✓</span>
+                      <span>Logged in: <strong>{loggedInUser}</strong></span>
                     </div>
-                  </div>
-                )}
-              </div>
-
-              <div className="login-scan-actions">
-                <button
-                  className="btn btn-primary"
-                  onClick={startLoginScan}
-                  disabled={!modelsLoaded || scanState === 'scanning'}
-                >
-                  {scanActionLabel}
-                </button>
-                <button className="btn btn-secondary" onClick={() => navigate('register')}>
-                  Daftar baru
-                </button>
-              </div>
-            </section>
-
-            <aside className="panel login-console">
-              <div className="login-console-header">
-                <div>
-                  <span className="login-tag">System Console</span>
-                  <h3>Access Status</h3>
-                  <p>Verification updates in real time.</p>
-                </div>
-                <div className={`status-dot ${canLogin ? 'status-dot--ready' : ''}`} />
-              </div>
-
-              <div className="status-panel">
-                <div className="status-row">
-                  <span className="status-label">Scan status</span>
-                  <span className="status-value">{scanStatus}</span>
-                </div>
-                <div className="status-row">
-                  <span className="status-label">Live feed</span>
-                  <span className="status-value">{formatLabel(liveMatch.label)}</span>
-                </div>
-                <div className="status-row">
-                  <span className="status-label">Confidence</span>
-                  <span className="status-value">{confidence !== null ? `${confidence}%` : '--'}</span>
-                </div>
-                <div className="status-row">
-                  <span className="status-label">Verified</span>
-                  <span className="status-value">{formatLabel(stableMatch.label)}</span>
-                </div>
-              </div>
-
-              <div className="login-result">
-                <span className="status-label">Last result</span>
-                <strong>
-                  {loginResult
-                    ? loginResult.status === 'allowed'
-                      ? `Allowed${loginResult.name ? ` - ${loginResult.name}` : ''}`
-                      : 'Not allowed'
-                    : 'Pending'}
-                </strong>
-              </div>
-
-              <div className="login-result">
-                <span className="status-label">Logged in user</span>
-                <strong>{loggedInUser ?? 'Not logged in'}</strong>
-              </div>
-            </aside>
-          </main>
-        </>
-      )}
-
-      {loginResult && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div
-            className={`modal-card ${
-              loginResult.status === 'allowed' ? 'modal-card--allowed' : 'modal-card--denied'
-            }`}
-          >
-            <div
-              className={`result-icon ${
-                loginResult.status === 'allowed' ? 'result-icon--allowed' : 'result-icon--denied'
-              }`}
-            />
-            <div
-              className={`result-badge ${
-                loginResult.status === 'allowed' ? 'result-badge--allowed' : 'result-badge--denied'
-              }`}
-            >
-              {loginResult.status === 'allowed' ? 'Allowed' : 'Not allowed'}
+                  )}
+                </>
+              )}
             </div>
-            <h3>{loginResult.status === 'allowed' ? 'Access granted' : 'Access denied'}</h3>
+          )}
+
+          {/* Saved Faces List */}
+          <div className="saved-faces">
+            <h3>Wajah Tersimpan</h3>
+            {people.length === 0 ? (
+              <p className="empty">Belum ada</p>
+            ) : (
+              <ul className="faces-list">
+                {people.map((person) => (
+                  <li key={person.name} className="face-item">
+                    <div>
+                      <strong>{person.name}</strong>
+                      <span>{person.descriptors.length} samples</span>
+                    </div>
+                    <button
+                      className="btn-delete"
+                      onClick={() => deletePerson(person.name)}
+                      title="Hapus"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+      </main>
+
+      {/* Login Result Modal */}
+      {loginResult && (
+        <div className="modal-backdrop">
+          <div className={`modal-card ${loginResult.status === 'allowed' ? 'modal--success' : 'modal--error'}`}>
+            <div className={`result-icon ${loginResult.status === 'allowed' ? 'icon--success' : 'icon--error'}`}>
+              {loginResult.status === 'allowed' ? '✓' : '✗'}
+            </div>
+            <h3>{loginResult.status === 'allowed' ? 'Berhasil!' : 'Gagal'}</h3>
             <p>
               {loginResult.status === 'allowed'
-                ? `Welcome, ${loginResult.name ?? 'User'}`
-                : 'Face not recognized. Please try again.'}
+                ? `Selamat datang, ${loginResult.name}`
+                : 'Wajah tidak dikenali'}
             </p>
-            <div className="modal-actions">
+            <div className="modal-buttons">
               {loginResult.status === 'denied' && (
                 <button className="btn btn-primary" onClick={startLoginScan}>
-                  Try again
+                  Coba Lagi
                 </button>
               )}
-              <button className="btn btn-secondary" onClick={dismissLoginResult}>
-                Close
+              <button className="btn btn-secondary" onClick={() => setLoginResult(null)}>
+                Tutup
               </button>
             </div>
           </div>
